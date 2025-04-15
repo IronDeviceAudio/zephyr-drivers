@@ -60,14 +60,12 @@ PLL_MATCH("24.576MHz", "24.576MHz", 24576000, 0x07, 0x70, 0x8B, 0x0F),
 static const struct reg_default sma1303_reg_def[] = {
 	{ 0x00, 0x80 },
 	{ 0x01, 0x00 },
-	{ 0x02, 0x00 },
+	{ 0x02, 0x01 },
 	{ 0x03, 0x11 },
-	{ 0x04, 0x17 },
+	{ 0x04, 0x01 },
 	{ 0x09, 0x00 },
 	{ 0x0A, 0x31 },
 	{ 0x0B, 0x98 },
-	{ 0x0C, 0x84 },
-	{ 0x0D, 0x07 },
 	{ 0x0E, 0x3F },
 	{ 0x10, 0x00 },
 	{ 0x11, 0x00 },
@@ -336,8 +334,28 @@ static int sma1303_set_format(const struct device *dev, const i2s_fmt_t i2s_fmt)
 		sma1303_reg_update(dev, SMA1303_A4_TOP_MAN3,
 					SMA1303_O_FORMAT_MASK,
 					SMA1303_O_FMT_I2S);
+		sma1303_reg_update(dev, SMA1303_02_INPUT1_CTRL2,
+					SMA1303_IMODE_MASK,
+					SMA1303_I2S);
 		break;
 	case I2S_FMT_DATA_FORMAT_PCM_SHORT:
+		sma1303_reg_update(dev, SMA1303_02_INPUT1_CTRL2,
+					SMA1303_IMODE_MASK,
+					SMA1303_PCM_SHORT);
+		sma1303_reg_update(dev, SMA1303_02_INPUT1_CTRL2,
+					SMA1303_PCM_DL_MASK,
+					SMA1303_PCM_16BIT);
+		sma1303_reg_update(dev, SMA1303_03_INPUT1_CTRL3,
+					SMA1303_PCM_N_SLOT_MASK,
+					SMA1303_PCM_N_SLOT2);
+		sma1303_reg_update(dev, SMA1303_04_INPUT1_CTRL4,
+					SMA1303_PCM1_SLOT_MASK,
+					SMA1303_PCM1_SLOT1);
+		sma1303_reg_update(dev, SMA1303_04_INPUT1_CTRL4,
+					SMA1303_PCM2_SLOT_MASK,
+					SMA1303_PCM2_SLOT2);
+		break;
+					
 	case I2S_FMT_DATA_FORMAT_PCM_LONG:
 	case I2S_FMT_DATA_FORMAT_LEFT_JUSTIFIED:
 	case I2S_FMT_DATA_FORMAT_RIGHT_JUSTIFIED:
