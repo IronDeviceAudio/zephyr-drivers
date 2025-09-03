@@ -5,6 +5,7 @@
  */
 
 #define DT_DRV_COMPAT iron_sma1303
+#define DRIVER_VERSION 2
 
 
 #include <zephyr/devicetree.h>
@@ -589,6 +590,8 @@ static int sma1303_init(const struct device *dev)
 	if (!config->bus_is_ready) {
 		return -ENODEV;
 	}
+
+	LOG_INF("%s: Driver Version is V%03d", __func__, DRIVER_VERSION);
 
 	return sma1303_hw_init(dev);
 }
