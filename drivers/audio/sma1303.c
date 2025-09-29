@@ -5,8 +5,7 @@
  */
 
 #define DT_DRV_COMPAT iron_sma1303
-#define DRIVER_VERSION 2
-
+#define DRIVER_VERSION 3
 
 #include <zephyr/devicetree.h>
 #include <zephyr/drivers/i2s.h>
@@ -168,7 +167,7 @@ static int cmd_read_reg(const struct shell *shell, size_t argc, char **argv)
 
 	return 0;
 }
-SHELL_CMD_REGISTER(read_reg, NULL, "SMA1303 Read I2C register: read_reg <addr>", cmd_read_reg);
+SHELL_CMD_REGISTER(readreg, NULL, "SMA1303 Read I2C register: read_reg <addr>", cmd_read_reg);
 
 static int cmd_write_reg(const struct shell *shell, size_t argc, char **argv)
 {
@@ -185,7 +184,7 @@ static int cmd_write_reg(const struct shell *shell, size_t argc, char **argv)
 
 	return 0;
 }
-SHELL_CMD_REGISTER(write_reg, NULL, "SMA1303 Write I2C register: write_reg <addr> <data>", cmd_write_reg);
+SHELL_CMD_REGISTER(writereg, NULL, "SMA1303 Write I2C register: write_reg <addr> <data>", cmd_write_reg);
 
 static int cmd_check_status(const struct shell *shell)
 {
@@ -233,6 +232,25 @@ static int cmd_check_status(const struct shell *shell)
 	return 0;
 }
 SHELL_CMD_REGISTER(status, NULL, "SMA1303 Check status", cmd_check_status);
+
+
+static int cmd_check_register(const struct shell *shell)
+{
+	uint8_t status1, status2;
+	bool ret = true;
+	uint8_t val[8];
+
+
+	for (int i=0; i<24; i++) {
+		for (int j=0; j<8; j++) {
+			sma1303_reg_read(sma1303_dev, 8*i+j, &val[j]);
+		}
+		LOG_INF("%s: 0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X,\n",
+				__func__, val[0], val[1], val[2], val[3], val[4], val[5], val[6], val[7]);
+	}
+	return 0;
+}
+SHELL_CMD_REGISTER(register, NULL, "SMA1303 Register Value", cmd_check_register);
 
 
 static int sma1303_set_pcm_volume(const struct device *dev, int vol)
@@ -537,6 +555,9 @@ static int sma1303_configure(const struct device *dev, struct audio_codec_cfg *c
 			* cfg->dai_cfg.i2s.word_size
 			* cfg->dai_cfg.i2s.channels;
 	LOG_INF("%s: BCLK = %d", __func__, bclk_freq);
+	
+	bclk_freq = 3072000;
+	LOG_INF("%s: modified BCLK = %d", __func__, bclk_freq);
 	
 	return sma1303_set_pll(dev, bclk_freq);
 }
