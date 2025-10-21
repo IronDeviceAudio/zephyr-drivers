@@ -1,11 +1,12 @@
 /*
- *  Copyright 2025 Iron Device Corporation.
+ * Copyright 2025 Iron Device Corporation.
+ * Copyright (C) 2025 Atmosic
  *
- *  SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: Apache-2.0
  */
 
 #define DT_DRV_COMPAT iron_sma1303
-#define DRIVER_VERSION 3
+
 
 #include <zephyr/devicetree.h>
 #include <zephyr/drivers/i2s.h>
@@ -13,15 +14,12 @@
 #include <zephyr/drivers/regulator.h>
 #include <zephyr/drivers/i2c.h>
 #include <zephyr/sys/byteorder.h>
-#include <zephyr/shell/shell.h>
-#include <stdlib.h>
 
 #include "sma1303.h"
 
 #include <zephyr/logging/log.h>
 LOG_MODULE_REGISTER(irondevice_sma1303, CONFIG_AUDIO_CODEC_LOG_LEVEL);
 
-static const struct device *sma1303_dev;
 union sma1303_bus {
 	struct i2c_dt_spec i2c;
 };
@@ -35,7 +33,7 @@ union sma1303_bus {
 	.post_n			= _post_n,\
 	.n			= _n,\
 	.vco			= _vco,\
-	.p_cp		= _p_cp,\
+	.p_cp			=_p_cp,\
 }
 
 /* PLL clock setting Table */
@@ -53,6 +51,7 @@ static struct sma1303_pll_match sma1303_pll_matches[] = {
 /* in_clk_name, out_clk_name, input_clk post_n, n, vco, p_cp */
 PLL_MATCH("1.411MHz",  "24.595MHz", 1411200,  0x07, 0xF4, 0x8B, 0x03),
 PLL_MATCH("1.536MHz",  "24.576MHz", 1536000,  0x07, 0xE0, 0x8B, 0x03),
+PLL_MATCH("2.000MHz",  "24.571MHz", 2000000,  0x07, 0xAC, 0x8B, 0x03),
 PLL_MATCH("3.072MHz",  "24.576MHz", 3072000,  0x07, 0x70, 0x8B, 0x03),
 PLL_MATCH("6.144MHz",  "24.576MHz", 6144000,  0x07, 0x70, 0x8B, 0x07),
 PLL_MATCH("12.288MHz", "24.576MHz", 12288000, 0x07, 0x70, 0x8B, 0x0B),
@@ -63,12 +62,14 @@ PLL_MATCH("24.576MHz", "24.576MHz", 24576000, 0x07, 0x70, 0x8B, 0x0F),
 static const struct reg_default sma1303_reg_def[] = {
 	{ 0x00, 0x80 },
 	{ 0x01, 0x00 },
-	{ 0x02, 0x01 },
+	{ 0x02, 0x00 },
 	{ 0x03, 0x11 },
-	{ 0x04, 0x01 },
+	{ 0x04, 0x17 },
 	{ 0x09, 0x00 },
 	{ 0x0A, 0x31 },
 	{ 0x0B, 0x98 },
+	{ 0x0C, 0x84 },
+	{ 0x0D, 0x07 },
 	{ 0x0E, 0x3F },
 	{ 0x10, 0x00 },
 	{ 0x11, 0x00 },
@@ -127,135 +128,67 @@ static bool sma1303_bus_is_ready_i2c(const union sma1303_bus *bus)
 	return device_is_ready(bus->i2c.bus);
 }
 
-static void sma1303_reg_read(const struct device *dev, uint8_t addr, uint8_t *val)
+#define SMA1303_I2C_RETRY_COUNT    10
+#define SMA1303_I2C_RETRY_DELAY_US 1000
+
+static int sma1303_reg_read(const struct device *dev, uint8_t addr, uint8_t *val)
 {
 	const struct sma1303_driver_config *config = dev->config;
+	int ret;
 
-	i2c_reg_read_byte_dt(&config->bus.i2c, addr, val);
+	for (int count = 0; count < SMA1303_I2C_RETRY_COUNT; count++) {
+		ret = i2c_reg_read_byte_dt(&config->bus.i2c, addr, val);
+		if (!ret) {
+			return 0;
+		}
+
+		if (count < SMA1303_I2C_RETRY_COUNT - 1) {
+			k_usleep(SMA1303_I2C_RETRY_DELAY_US);
+		}
+	}
+
+	LOG_ERR("Failed to read reg 0x%02x after %d retries, error: %d",
+		addr, SMA1303_I2C_RETRY_COUNT, ret);
+	return ret;
 }
 
-static void sma1303_reg_write(const struct device *dev, uint8_t addr, uint8_t val)
+static int sma1303_reg_write(const struct device *dev, uint8_t addr, uint8_t val)
 {
 	const struct sma1303_driver_config *config = dev->config;
+	int ret;
 
-	i2c_reg_write_byte_dt(&config->bus.i2c, addr, val);
+	for (int count = 0; count < SMA1303_I2C_RETRY_COUNT; count++) {
+		ret = i2c_reg_write_byte_dt(&config->bus.i2c, addr, val);
+		if (!ret) {
+			return 0;
+		}
+
+		if (count < SMA1303_I2C_RETRY_COUNT - 1) {
+			k_usleep(SMA1303_I2C_RETRY_DELAY_US);
+		}
+	}
+
+	LOG_ERR("Failed to write reg 0x%02x=0x%02x after %d retries, error: %d",
+		addr, val, SMA1303_I2C_RETRY_COUNT, ret);
+	return ret;
 }
 
-static void sma1303_reg_update(const struct device *dev, uint8_t addr, uint8_t mask,
-			      uint8_t val)
+static int sma1303_reg_update(const struct device *dev, uint8_t addr, uint8_t mask, uint8_t val)
 {
 	uint8_t orig;
+	int ret;
 
-	sma1303_reg_read(dev, addr, &orig);
+	ret = sma1303_reg_read(dev, addr, &orig);
+	if (ret < 0) {
+		return ret;
+	}
+
 	val = (orig & ~mask) | (val & mask);
-
-	sma1303_reg_write(dev, addr, val);
+	return sma1303_reg_write(dev, addr, val);
 }
-
-static int cmd_read_reg(const struct shell *shell, size_t argc, char **argv)
-{
-	if (argc < 2) {
-		shell_error(shell, "Usage: read_reg <addr>");
-		return -EINVAL;
-	}
-
-	uint8_t addr = strtol(argv[1], NULL, 16);
-	uint8_t val;
-
-	sma1303_reg_read(sma1303_dev, addr, &val);
-	LOG_INF("%s: 0x%02X : 0x%02X", __func__, addr, val);
-
-	return 0;
-}
-SHELL_CMD_REGISTER(readreg, NULL, "SMA1303 Read I2C register: read_reg <addr>", cmd_read_reg);
-
-static int cmd_write_reg(const struct shell *shell, size_t argc, char **argv)
-{
-	if (argc < 3) {
-		shell_error(shell, "Usage: write_reg <addr> <data>");
-		return -EINVAL;
-	}
-
-	uint8_t addr = strtol(argv[1], NULL, 16);
-	uint8_t val = strtol(argv[2], NULL, 16);
-
-	sma1303_reg_write(sma1303_dev, addr, val);
-	LOG_INF("%s: 0x%02X : 0x%02X", __func__, addr, val);
-
-	return 0;
-}
-SHELL_CMD_REGISTER(writereg, NULL, "SMA1303 Write I2C register: write_reg <addr> <data>", cmd_write_reg);
-
-static int cmd_check_status(const struct shell *shell)
-{
-	uint8_t status1, status2;
-	bool ret = true;
-
-	sma1303_reg_read(sma1303_dev, 0xFA, &status1);
-	sma1303_reg_read(sma1303_dev, 0xFB, &status2);
-
-	// OT1_OK
-	if ((status1 & 0x80) == 0x00) {
-		LOG_INF("%s: TSD Warning (FA:%02X)", __func__, status1);
-		ret = false;
-	}
-
-	// OT2_OK
-	if ((status1 & 0x40) == 0x00) {
-		LOG_INF("%s: TSD (FA:%02X)", __func__, status1);
-		ret = false;
-	}
-
-	// OCP_SPK
-	if ((status2 & 0x20) == 0x20) {
-		LOG_INF("%s: Overcurrent situation in SPK output-stage (FB:%02X)",
-				__func__, status2);
-		ret = false;
-	}
-
-	// OCP_BST
-	if ((status2 & 0x10) == 0x10) {
-		LOG_INF("%s: Overcurrent situation in SPK_BST output-stage (FB:%02X)",
-				__func__, status2);
-		ret = false;
-	}
-
-	// CLOCK_MON
-	if ((status2 & 0x01) == 0x01) {
-		LOG_INF("%s: Clock Fault (FB:%02X)", __func__, status2);
-		ret = false;
-	}
-
-	if (ret)
-		LOG_INF("%s: Status is \'OK\'", __func__);
-
-	return 0;
-}
-SHELL_CMD_REGISTER(status, NULL, "SMA1303 Check status", cmd_check_status);
-
-
-static int cmd_check_register(const struct shell *shell)
-{
-	uint8_t status1, status2;
-	bool ret = true;
-	uint8_t val[8];
-
-
-	for (int i=0; i<24; i++) {
-		for (int j=0; j<8; j++) {
-			sma1303_reg_read(sma1303_dev, 8*i+j, &val[j]);
-		}
-		LOG_INF("%s: 0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X,\n",
-				__func__, val[0], val[1], val[2], val[3], val[4], val[5], val[6], val[7]);
-	}
-	return 0;
-}
-SHELL_CMD_REGISTER(register, NULL, "SMA1303 Register Value", cmd_check_register);
-
 
 static int sma1303_set_pcm_volume(const struct device *dev, int vol)
 {
-	LOG_INF("%s: VOLUME = %d", __func__, vol);
 	sma1303_reg_write(dev, SMA1303_0A_SPK_VOL, vol);
 
 	return 0;
@@ -265,8 +198,6 @@ static int sma1303_set_mute(const struct device *dev, const bool mute)
 {
 
 	if (mute) {
-		
-		LOG_INF("%s: MUTE", __func__);
 		sma1303_reg_update(dev, SMA1303_0E_MUTE_VOL_CTRL,
 					SMA1303_SPK_MUTE_MASK,
 					SMA1303_SPK_MUTE);
@@ -291,8 +222,6 @@ static int sma1303_set_property(const struct device *dev, audio_property_t prope
 static int sma1303_global_en_event(const struct device *dev, const bool enable)
 {
 	if (enable) {
-
-		LOG_INF("%s: POWER ON", __func__);
 		sma1303_reg_update(dev, SMA1303_8E_PLL_CTRL,
 					SMA1303_PLL_PD2_MASK,
 					SMA1303_PLL_OPERATION2);
@@ -304,18 +233,18 @@ static int sma1303_global_en_event(const struct device *dev, const bool enable)
 		sma1303_reg_update(dev, SMA1303_10_SYSTEM_CTRL1,
 					SMA1303_SPK_MODE_MASK,
 					SMA1303_SPK_STEREO);
-				
+
 		sma1303_reg_update(dev, SMA1303_0E_MUTE_VOL_CTRL,
 					SMA1303_SPK_MUTE_MASK,
-					SMA1303_SPK_UNMUTE);		
+					SMA1303_SPK_UNMUTE);
 	} else {
-		
+
 		sma1303_reg_update(dev, SMA1303_0E_MUTE_VOL_CTRL,
 					SMA1303_SPK_MUTE_MASK,
 					SMA1303_SPK_MUTE);
-							
-		k_msleep(55);
-		
+
+		k_msleep(55); // prevent unintended sounds
+
 		sma1303_reg_update(dev, SMA1303_10_SYSTEM_CTRL1,
 					SMA1303_SPK_MODE_MASK,
 					SMA1303_SPK_OFF);
@@ -326,8 +255,7 @@ static int sma1303_global_en_event(const struct device *dev, const bool enable)
 
 		sma1303_reg_update(dev, SMA1303_8E_PLL_CTRL,
 					SMA1303_PLL_PD2_MASK,
-					SMA1303_PLL_PD2);	
-		LOG_INF("%s: POWER DOWN", __func__);
+					SMA1303_PLL_PD2);
 	}
 
 	return 0;
@@ -345,16 +273,28 @@ static void sma1303_start_output(const struct device *dev)
 
 static int sma1303_set_pll(const struct device *dev, const uint32_t freq)
 {
-	int i;
+	 int i = -1;
+	 uint32_t min_error = UINT32_MAX;
 
-	for (i = 0; i < ARRAY_SIZE(sma1303_pll_matches); i++) {
-			if (sma1303_pll_matches[i].input_clk == freq)
-				break;
-	}
-	if (i == ARRAY_SIZE(sma1303_pll_matches)) {
-		LOG_DBG("No matching value between pll table and SCK");
+	 // Find the PLL frequency with minimum error
+	 for (int j = 0; j < ARRAY_SIZE(sma1303_pll_matches); j++) {
+		  uint32_t error = (sma1303_pll_matches[j].input_clk > freq) ?
+				(sma1303_pll_matches[j].input_clk - freq) :
+				(freq - sma1303_pll_matches[j].input_clk);
+
+		  if (error < min_error) {
+				min_error = error;
+				i = j;
+		  }
+	 }
+
+	if (i == -1) {
+		LOG_ERR("No suitable PLL frequency found for %d Hz", freq);
 		return -EINVAL;
 	}
+
+	LOG_INF("sma1303_set_pll requested=%d, selected=%d, error=%d",
+		freq, sma1303_pll_matches[i].input_clk, min_error);
 
 	sma1303_reg_update(dev, SMA1303_A2_TOP_MAN1,
 				SMA1303_PLL_PD_MASK | SMA1303_PLL_REF_CLK_MASK,
@@ -368,7 +308,7 @@ static int sma1303_set_pll(const struct device *dev, const uint32_t freq)
 			sma1303_pll_matches[i].vco);
 	sma1303_reg_write(dev, SMA1303_8F_PLL_P_CP,
 			sma1303_pll_matches[i].p_cp);
-			
+
 	return 0;
 }
 
@@ -400,7 +340,7 @@ static int sma1303_set_frame_clk_freq(const struct device *dev, const uint32_t f
 					SMA1303_HIGH_FIRST_CH);
 		break;
 	default:
-		LOG_DBG("Unsupported frame clock frequency: %d Hz", freq);
+		LOG_ERR("Unsupported frame clock frequency: %d Hz", freq);
 		return -EINVAL;
 	}
 
@@ -427,7 +367,7 @@ static int sma1303_set_word_size(const struct device *dev, const uint8_t word_si
 		break;
 	case AUDIO_PCM_WIDTH_20_BITS:
 	default:
-		LOG_DBG("Unsupported bit widths: %d bits", word_size);
+		LOG_ERR("Unsupported bit widths: %d bits", word_size);
 		return -EINVAL;
 	}
 
@@ -444,33 +384,13 @@ static int sma1303_set_format(const struct device *dev, const i2s_fmt_t i2s_fmt)
 		sma1303_reg_update(dev, SMA1303_A4_TOP_MAN3,
 					SMA1303_O_FORMAT_MASK,
 					SMA1303_O_FMT_I2S);
-		sma1303_reg_update(dev, SMA1303_02_INPUT1_CTRL2,
-					SMA1303_IMODE_MASK,
-					SMA1303_I2S);
 		break;
 	case I2S_FMT_DATA_FORMAT_PCM_SHORT:
-		sma1303_reg_update(dev, SMA1303_02_INPUT1_CTRL2,
-					SMA1303_IMODE_MASK,
-					SMA1303_PCM_SHORT);
-		sma1303_reg_update(dev, SMA1303_02_INPUT1_CTRL2,
-					SMA1303_PCM_DL_MASK,
-					SMA1303_PCM_16BIT);
-		sma1303_reg_update(dev, SMA1303_03_INPUT1_CTRL3,
-					SMA1303_PCM_N_SLOT_MASK,
-					SMA1303_PCM_N_SLOT2);
-		sma1303_reg_update(dev, SMA1303_04_INPUT1_CTRL4,
-					SMA1303_PCM1_SLOT_MASK,
-					SMA1303_PCM1_SLOT1);
-		sma1303_reg_update(dev, SMA1303_04_INPUT1_CTRL4,
-					SMA1303_PCM2_SLOT_MASK,
-					SMA1303_PCM2_SLOT2);
-		break;
-					
 	case I2S_FMT_DATA_FORMAT_PCM_LONG:
 	case I2S_FMT_DATA_FORMAT_LEFT_JUSTIFIED:
 	case I2S_FMT_DATA_FORMAT_RIGHT_JUSTIFIED:
 	default:
-		LOG_DBG("In the current version, data formats other than I2S are not supported");
+		LOG_ERR("In the current version, data formats other than I2S are not supported");
 		return -EINVAL;
 	}
 
@@ -496,7 +416,8 @@ static int sma1303_set_format(const struct device *dev, const i2s_fmt_t i2s_fmt)
 					SMA1303_HIGH_FIRST_CH | SMA1303_SCK_RISING_EDGE);
 		break;
 	default:
-		LOG_DBG("Invalid DAI clock polarity");
+		LOG_ERR("Invalid DAI clock polarity");
+		return -EINVAL;
 	}
 
 	return 0;
@@ -507,7 +428,6 @@ static int sma1303_configure(const struct device *dev, struct audio_codec_cfg *c
 	uint32_t bclk_freq;
 	int ret;
 
-	LOG_INF("%s: TYPE = %d", __func__, cfg->dai_type);
 	if (cfg->dai_type != AUDIO_DAI_TYPE_I2S) {
 		// AUDIO_DAI_TYPE_LEFT_JUSTIFIED
 		// AUDIO_DAI_TYPE_RIGHT_JUSTIFIED
@@ -518,7 +438,6 @@ static int sma1303_configure(const struct device *dev, struct audio_codec_cfg *c
 		return -EINVAL;
 	}
 
-	LOG_INF("%s: ROUTE = %d", __func__, cfg->dai_route);
 	if (cfg->dai_route != AUDIO_ROUTE_PLAYBACK) {
 		// AUDIO_ROUTE_BYPASS
 		// AUDIO_ROUTE_PLAYBACK_CAPTURE
@@ -527,45 +446,42 @@ static int sma1303_configure(const struct device *dev, struct audio_codec_cfg *c
 		return -EINVAL;
 	}
 
-	LOG_INF("%s: ChANNELS = %d", __func__, cfg->dai_cfg.i2s.channels);
 	if (cfg->dai_cfg.i2s.channels != 2) {
 		LOG_ERR("The driver currently supports only 2 channels in this version");
 		return -EINVAL;
 	}
 
-	LOG_INF("%s: LRCK = %d", __func__, cfg->dai_cfg.i2s.frame_clk_freq);
+	LOG_INF("sma1303_configure freq=%d", cfg->dai_cfg.i2s.frame_clk_freq);
 	ret = sma1303_set_frame_clk_freq(dev, cfg->dai_cfg.i2s.frame_clk_freq);
 	if (ret < 0) {
 		return ret;
 	}
 
-	LOG_INF("%s: WORD SIZE = %d", __func__, cfg->dai_cfg.i2s.word_size);
+	LOG_INF("sma1303_configure word_size=%d", cfg->dai_cfg.i2s.word_size);
 	ret = sma1303_set_word_size(dev, cfg->dai_cfg.i2s.word_size);
 	if (ret < 0) {
 		return ret;
 	}
-
-	LOG_INF("%s: FORMAT = %d", __func__, cfg->dai_cfg.i2s.format);
+	LOG_INF("sma1303_configure format=%d", cfg->dai_cfg.i2s.format);
 	ret = sma1303_set_format(dev, cfg->dai_cfg.i2s.format);
 	if (ret < 0) {
 		return ret;
 	}
 
+#if CONFIG_SMA1303_PLL
+	bclk_freq = CONFIG_SMA1303_PLL;
+#else
 	bclk_freq = cfg->dai_cfg.i2s.frame_clk_freq
 			* cfg->dai_cfg.i2s.word_size
 			* cfg->dai_cfg.i2s.channels;
-	LOG_INF("%s: BCLK = %d", __func__, bclk_freq);
-	
-	bclk_freq = 3072000;
-	LOG_INF("%s: modified BCLK = %d", __func__, bclk_freq);
-	
+#endif
+	LOG_INF("bclk_freq=%d", bclk_freq);
 	return sma1303_set_pll(dev, bclk_freq);
 }
 
 static int sma1303_apply_setting(const struct device *dev)
 {
 
-	LOG_INF("%s: initial setting", __func__);
 	for (int i = 0; i < ARRAY_SIZE(sma1303_reg_def); i++) {
 		sma1303_reg_write(dev, sma1303_reg_def[i].reg, sma1303_reg_def[i].def);
 	}
@@ -579,7 +495,7 @@ static int sma1303_hw_init(const struct device *dev)
 	int ret, i = 5;
 
 	while (!(val & SMA1303_FF_DEVICE_INDEX)) {
-		k_msleep(1);
+		k_usleep(1000);
 		sma1303_reg_read(dev, SMA1303_FF_DEVICE_INDEX, &val);
 		i--;
 		if (i < 0) {
@@ -588,7 +504,7 @@ static int sma1303_hw_init(const struct device *dev)
 	}
 
 	ver = val & 0x07;
-	LOG_INF("%s: Found Device(SMA1303) is MVT%d", __func__, ver);
+	LOG_INF("Found Device(SMA1303) is MVT%d", ver);
 
 	sma1303_reg_update(dev, SMA1303_00_SYSTEM_CTRL,
 				SMA1303_RESETBYI2C_MASK,
@@ -606,13 +522,9 @@ static int sma1303_init(const struct device *dev)
 {
 	const struct sma1303_driver_config *config = dev->config;
 
-	sma1303_dev = dev;
-
 	if (!config->bus_is_ready) {
 		return -ENODEV;
 	}
-
-	LOG_INF("%s: Driver Version is V%03d", __func__, DRIVER_VERSION);
 
 	return sma1303_hw_init(dev);
 }

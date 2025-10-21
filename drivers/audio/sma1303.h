@@ -1,9 +1,10 @@
 /*
  * Copyright 2025 Iron Device Corporation
+ * Copyright (C) 2025 Atmosic
  *
  * SPDX-License-Identifier: Apache-2.0
  */
- 
+
 #ifndef ZEPHYR_DRIVERS_AUDIO_SMA1303_H_
 #define ZEPHYR_DRIVERS_AUDIO_SMA1303_H_
 
