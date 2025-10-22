@@ -6,7 +6,7 @@
  */
 
 #define DT_DRV_COMPAT iron_sma1303
-#define DRIVER_VERSION 4
+#define DRIVER_VERSION 5
 
 #include <zephyr/devicetree.h>
 #include <zephyr/drivers/i2s.h>
@@ -271,10 +271,7 @@ SHELL_CMD_REGISTER(cmd_status, NULL, "SMA1303 Check status", cmd_check_status);
 
 static int cmd_check_register(const struct shell *shell)
 {
-	uint8_t status1, status2;
-	bool ret = true;
 	uint8_t val[8];
-
 
 	for (int i=0; i<24; i++) {
 		for (int j=0; j<8; j++) {
@@ -636,7 +633,7 @@ static int sma1303_apply_setting(const struct device *dev)
 		sma1303_reg_write(dev, sma1303_reg_def[i].reg, sma1303_reg_def[i].def);
 	}
 	
-	sma1303_reg_update, dev, SMA1303_0C_BST_TEST1,
+	sma1303_reg_update(dev, SMA1303_0C_BST_TEST1,
 				SMA1303_EN_SH_PRT_MASK,
 				SMA1303_EN_SH_PRT_DISABLE);
 
