@@ -6,7 +6,7 @@
  */
 
 #define DT_DRV_COMPAT iron_sma1303
-#define DRIVER_VERSION 5
+#define DRIVER_VERSION 6
 
 #include <zephyr/devicetree.h>
 #include <zephyr/drivers/i2s.h>
@@ -62,58 +62,19 @@ PLL_MATCH("24.576MHz", "24.576MHz", 24576000, 0x07, 0x70, 0x8B, 0x0F),
 };
 
 static const struct reg_default sma1303_reg_def[] = {
-	{ 0x00, 0x80 },
-	{ 0x01, 0x00 },
-	{ 0x02, 0x00 },
-	{ 0x03, 0x11 },
-	{ 0x04, 0x17 },
-	{ 0x09, 0x00 },
 	{ 0x0A, 0x31 },
 	{ 0x0B, 0x98 },
 	{ 0x0E, 0x3F },
-	{ 0x10, 0x00 },
-	{ 0x11, 0x00 },
-	{ 0x12, 0x00 },
 	{ 0x14, 0x5C },
-	{ 0x15, 0x01 },
-	{ 0x16, 0x0F },
-	{ 0x17, 0x0F },
-	{ 0x18, 0x0F },
-	{ 0x19, 0x00 },
-	{ 0x1A, 0x00 },
-	{ 0x1B, 0x00 },
-	{ 0x23, 0x19 },
-	{ 0x24, 0x00 },
-	{ 0x25, 0x00 },
-	{ 0x26, 0x04 },
-	{ 0x33, 0x00 },
-	{ 0x36, 0x92 },
 	{ 0x37, 0x27 },
 	{ 0x3B, 0x5A },
 	{ 0x3C, 0x20 },
-	{ 0x3D, 0x00 },
-	{ 0x3E, 0x03 },
 	{ 0x3F, 0x0C },
-	{ 0x8B, 0x07 },
-	{ 0x8C, 0x70 },
-	{ 0x8D, 0x8B },
-	{ 0x8E, 0x6F },
-	{ 0x8F, 0x03 },
 	{ 0x90, 0x26 },
-	{ 0x91, 0x42 },
 	{ 0x92, 0xE0 },
-	{ 0x94, 0x35 },
 	{ 0x95, 0x0C },
-	{ 0x96, 0x42 },
 	{ 0x97, 0x95 },
-	{ 0xA0, 0x00 },
-	{ 0xA1, 0x3B },
 	{ 0xA2, 0xC8 },
-	{ 0xA3, 0x28 },
-	{ 0xA4, 0x40 },
-	{ 0xA5, 0x01 },
-	{ 0xA6, 0x41 },
-	{ 0xA7, 0x00 },
 };
 
 typedef bool (*sma1303_bus_is_ready_fn)(const union sma1303_bus *bus);
@@ -267,23 +228,6 @@ static int cmd_check_status(const struct shell *shell)
 	return 0;
 }
 SHELL_CMD_REGISTER(cmd_status, NULL, "SMA1303 Check status", cmd_check_status);
-
-
-static int cmd_check_register(const struct shell *shell)
-{
-	uint8_t val[8];
-
-	for (int i=0; i<24; i++) {
-		for (int j=0; j<8; j++) {
-			sma1303_reg_read(sma1303_dev, 8*i+j, &val[j]);
-		}
-		LOG_INF("%s: 0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X,\n",
-				__func__, val[0], val[1], val[2], val[3], val[4], val[5], val[6], val[7]);
-	}
-	return 0;
-}
-SHELL_CMD_REGISTER(cmd_register, NULL, "SMA1303 Register Value", cmd_check_register);
-
 
 static int sma1303_set_pcm_volume(const struct device *dev, int vol)
 {
@@ -505,23 +449,6 @@ static int sma1303_set_format(const struct device *dev, const i2s_fmt_t i2s_fmt)
 					SMA1303_I2S);
 		break;
 	case I2S_FMT_DATA_FORMAT_PCM_SHORT:
-		sma1303_reg_update(dev, SMA1303_02_INPUT1_CTRL2,
-					SMA1303_IMODE_MASK,
-					SMA1303_PCM_SHORT);
-		sma1303_reg_update(dev, SMA1303_02_INPUT1_CTRL2,
-					SMA1303_PCM_DL_MASK,
-					SMA1303_PCM_16BIT);
-		sma1303_reg_update(dev, SMA1303_03_INPUT1_CTRL3,
-					SMA1303_PCM_N_SLOT_MASK,
-					SMA1303_PCM_N_SLOT2);
-		sma1303_reg_update(dev, SMA1303_04_INPUT1_CTRL4,
-					SMA1303_PCM1_SLOT_MASK,
-					SMA1303_PCM1_SLOT1);
-		sma1303_reg_update(dev, SMA1303_04_INPUT1_CTRL4,
-					SMA1303_PCM2_SLOT_MASK,
-					SMA1303_PCM2_SLOT2);
-		break;
-					
 	case I2S_FMT_DATA_FORMAT_PCM_LONG:
 	case I2S_FMT_DATA_FORMAT_LEFT_JUSTIFIED:
 	case I2S_FMT_DATA_FORMAT_RIGHT_JUSTIFIED:
